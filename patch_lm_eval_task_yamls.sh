@@ -56,6 +56,13 @@ patch_path() {
 
 # PIQA needs the parquet-branch pin in addition to the path rewrite, because
 # ybisk/piqa's main branch still ships a loading script.
+#
+# CAREFUL: lm_eval 0.4.3 ships its OWN `dataset_kwargs: {trust_remote_code: true}` in this
+# file (0.4.2 did not). Blindly appending a second `dataset_kwargs:` block produces a
+# duplicate yaml key -- the last one wins, so our revision pin gets silently overridden by
+# trust_remote_code, which datasets 5.x rejects outright. The run then only works if the
+# parquet data happens to be cached already. So we need to delete every existing dataset_kwargs block
+# first, then insert ours. That is version-agnostic and stays idempotent.
 patch_piqa_revision() {
     local f="$TASKS_DIR/piqa/piqa.yaml"
 
@@ -65,15 +72,44 @@ patch_piqa_revision() {
         return
     fi
 
-    if grep -q "refs/convert/parquet" "$f"; then
-        echo "already   piqa/piqa.yaml  ->  revision: refs/convert/parquet"
-    elif grep -qE "^dataset_name: *null\$" "$f"; then
-        sed -i -E '/^dataset_name: *null$/a dataset_kwargs:\n  revision: refs/convert/parquet' "$f"
-        echo "PATCHED   piqa/piqa.yaml  ->  revision: refs/convert/parquet"
-    else
-        echo "UNEXPECTED piqa/piqa.yaml -- no 'dataset_name: null' line to anchor the insert"
-        rc=1
-    fi
+    if python - "$f" <<'PY'
+import re, sys
+
+path = sys.argv[1]
+original = open(path).read()
+lines = original.splitlines()
+WANT = ["dataset_kwargs:", "  revision: refs/convert/parquet"]
+
+# 1) drop every existing dataset_kwargs block (the key line plus its indented children)
+kept, dropped, i = [], [], 0
+while i < len(lines):
+    if re.match(r"^dataset_kwargs:\s*$", lines[i]):
+        i += 1
+        while i < len(lines) and re.match(r"^\s+\S", lines[i]):
+            dropped.append(lines[i].strip())
+            i += 1
+        continue
+    kept.append(lines[i])
+    i += 1
+
+# 2) reinsert ours immediately after `dataset_name: null`
+for j, line in enumerate(kept):
+    if re.match(r"^dataset_name:\s*null\s*$", line):
+        kept[j + 1 : j + 1] = WANT
+        break
+else:
+    sys.exit("UNEXPECTED piqa/piqa.yaml -- no 'dataset_name: null' line to anchor the insert")
+
+new = "\n".join(kept) + "\n"
+if new == original:
+    print("already   piqa/piqa.yaml  ->  revision: refs/convert/parquet")
+else:
+    open(path, "w").write(new)
+    conflicting = [d for d in dropped if "refs/convert/parquet" not in d]
+    note = f"  (removed conflicting: {', '.join(conflicting)})" if conflicting else ""
+    print(f"PATCHED   piqa/piqa.yaml  ->  revision: refs/convert/parquet{note}")
+PY
+    then :; else rc=1; fi
 }
 
 patch_path "hellaswag/hellaswag.yaml"   "hellaswag"  "Rowan/hellaswag"
