@@ -26,6 +26,8 @@ DTYPE="${DTYPE:-bfloat16}"
 # see ../RTX6000_mamba3/evals/lm_harness_eval.py to know why ADD_BOS parameter is added
 ADD_BOS="${ADD_BOS:-false}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
+# specify the conda environment to be used
+CONDA_ENV="${CONDA_ENV:-mamba3}"
 TASKS="${TASKS:-lambada_openai,hellaswag,piqa,arc_easy,arc_challenge,winogrande,openbookqa}"
 TAG="${TAG:-$(basename "$MODEL")_bos${ADD_BOS}}"
 OUTDIR="${OUTDIR:-/home/m314510193/GithubMamba3Train/mamba3_evals/results_${TAG}}"
@@ -33,8 +35,11 @@ OUTDIR="${OUTDIR:-/home/m314510193/GithubMamba3Train/mamba3_evals/results_${TAG}
 # Refer to: "NANO4 Mamba-3 環境架設與使用.pdf"
 module load miniconda3/26.1.1
 module load cuda/13.0
-conda activate mamba3
+conda activate "$CONDA_ENV"
 export PATH="$CONDA_PREFIX/bin:$PATH"
+
+# print out the lm_eval version
+python -c "from importlib.metadata import version; print('lm_eval version:', version('lm_eval'))"
 
 # let Python to import mixer_seq_simple.py in 
 # `RTX6000_mamba3/mamba_ssm/models/mixer_seq_simple.py`
